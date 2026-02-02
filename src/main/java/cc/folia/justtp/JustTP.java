@@ -1,6 +1,9 @@
 package cc.folia.justtp;
 
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.context.ParsedCommandNode;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.tree.ArgumentCommandNode;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -35,33 +38,60 @@ public class JustTP {
                 node.getName().equals("tp")
         );
         var tp = Commands.literal("tp")
-                .requires(source -> true)
-                .then(Commands.argument("player", EntityArgument.player())
-                        .executes(ctx -> teleportToPlayer(ctx.getSource(), EntityArgument.getPlayer(ctx, "player"))));
+                .requires(source -> true);
+
+        var targetArg = Commands.argument("target", EntityArgument.player())
+                .executes(ctx -> teleportSelfToPlayer(ctx.getSource(), getPlayerArg(ctx, "target")));
+
+        var selfTarget = Commands.literal("@s")
+                .executes(ctx -> teleportSelfToPlayer(ctx.getSource(), ctx.getSource().getPlayerOrException()));
 
         if (Config.ENABLE_COORDINATE_TP.get()) {
             tp = tp.then(Commands.argument("pos", Vec3Argument.vec3())
-                    .executes(ctx -> teleportToCoordinates(ctx.getSource(), Vec3Argument.getVec3(ctx, "pos"))));
+                    .executes(ctx -> teleportSelfToCoordinates(ctx.getSource(), Vec3Argument.getVec3(ctx, "pos"))));
+            targetArg = targetArg.then(Commands.argument("pos", Vec3Argument.vec3())
+                    .executes(ctx -> teleportTargetsToCoordinates(ctx.getSource(),
+                            getPlayerArg(ctx, "target"),
+                            Vec3Argument.getVec3(ctx, "pos"))));
+            selfTarget = selfTarget.then(Commands.argument("pos", Vec3Argument.vec3())
+                    .executes(ctx -> teleportSelfToCoordinates(ctx.getSource(), Vec3Argument.getVec3(ctx, "pos"))));
         }
+
+        targetArg = targetArg.then(Commands.literal("@s")
+                .executes(ctx -> teleportTargetsToPlayer(ctx.getSource(),
+                        getPlayerArg(ctx, "target"),
+                        ctx.getSource().getPlayerOrException())));
+        targetArg = targetArg.then(Commands.argument("destination", EntityArgument.player())
+                .executes(ctx -> teleportTargetsToPlayer(ctx.getSource(),
+                        getPlayerArg(ctx, "target"),
+                        getPlayerArg(ctx, "destination"))));
+
+        selfTarget = selfTarget.then(Commands.argument("destination", EntityArgument.player())
+                .executes(ctx -> teleportTargetsToPlayer(ctx.getSource(),
+                        ctx.getSource().getPlayerOrException(),
+                        getPlayerArg(ctx, "destination"))));
+        selfTarget = selfTarget.then(Commands.literal("@s")
+                .executes(ctx -> teleportTargetsToPlayer(ctx.getSource(),
+                        ctx.getSource().getPlayerOrException(),
+                        ctx.getSource().getPlayerOrException())));
+
+        tp = tp.then(targetArg).then(selfTarget);
 
         dispatcher.register(tp);
     }
 
-    private static int teleportToPlayer(CommandSourceStack source, ServerPlayer target) throws CommandSyntaxException {
+    private static int teleportSelfToPlayer(CommandSourceStack source, ServerPlayer destination) throws CommandSyntaxException {
+        if (destination == null) {
+            return 0;
+        }
         if (!(source.getEntity() instanceof ServerPlayer)) {
             source.sendFailure(Component.translatable("justtp.error.only_player"));
             return 0;
-        } else {
-            ServerPlayer self = source.getPlayerOrException();
-            ServerLevel targetLevel = target.serverLevel();
-            Vec3 pos = target.position();
-            self.teleportTo(targetLevel, pos.x, pos.y, pos.z, self.getYRot(), self.getXRot());
-            sendTpMessages(self, target);
-            return 1;
         }
+        return teleportTargetsToPlayer(source, source.getPlayerOrException(), destination);
     }
 
-    private static int teleportToCoordinates(CommandSourceStack source, Vec3 pos) throws CommandSyntaxException {
+    private static int teleportSelfToCoordinates(CommandSourceStack source, Vec3 pos) throws CommandSyntaxException {
         if (!Config.enableCoordinateTp) {
             source.sendFailure(Component.translatable("justtp.error.coordinates_disabled"));
             return 0;
@@ -71,40 +101,84 @@ public class JustTP {
             return 0;
         }
         ServerPlayer self = source.getPlayerOrException();
-        ServerLevel level = self.serverLevel();
-        self.teleportTo(level, pos.x, pos.y, pos.z, self.getYRot(), self.getXRot());
-        sendTpCoordinatesMessages(self, pos);
+        return teleportTargetsToCoordinates(source, self, pos);
+    }
+
+    private static int teleportTargetsToPlayer(CommandSourceStack source, ServerPlayer target, ServerPlayer destination) {
+        if (target == null || destination == null) {
+            return 0;
+        }
+        ServerLevel targetLevel = destination.serverLevel();
+        Vec3 pos = destination.position();
+        target.teleportTo(targetLevel, pos.x, pos.y, pos.z, target.getYRot(), target.getXRot());
+        sendTpPlayerMessages(source, target, destination);
         return 1;
     }
 
-    private static void sendTpMessages(ServerPlayer source, ServerPlayer target) {
-        Component sourceMessage = Component.translatable("justtp.message.tp.source", source.getDisplayName(), target.getDisplayName());
-        Component targetMessage = Component.translatable("justtp.message.tp.target", source.getDisplayName(), target.getDisplayName());
+    private static int teleportTargetsToCoordinates(CommandSourceStack source, ServerPlayer target, Vec3 pos) {
+        if (!Config.enableCoordinateTp) {
+            source.sendFailure(Component.translatable("justtp.error.coordinates_disabled"));
+            return 0;
+        }
+        if (target == null) {
+            return 0;
+        }
+        ServerLevel level = target.serverLevel();
+        target.teleportTo(level, pos.x, pos.y, pos.z, target.getYRot(), target.getXRot());
+        sendTpCoordinatesMessages(source, target, pos);
+        return 1;
+    }
 
+    private static void sendTpPlayerMessages(CommandSourceStack source, ServerPlayer moved, ServerPlayer destination) {
+        Component sourceMessage = Component.translatable("justtp.message.tp.source", moved.getDisplayName(), destination.getDisplayName());
+        Component targetMessage = Component.translatable("justtp.message.tp.target", moved.getDisplayName());
+        sendTpMessage(source, sourceMessage, () -> {
+            if (destination != source.getEntity()) {
+                destination.sendSystemMessage(targetMessage);
+            }
+        });
+    }
+
+    private static void sendTpCoordinatesMessages(CommandSourceStack source, ServerPlayer moved, Vec3 pos) {
+        String x = String.format(Locale.ROOT, "%.2f", pos.x);
+        String y = String.format(Locale.ROOT, "%.2f", pos.y);
+        String z = String.format(Locale.ROOT, "%.2f", pos.z);
+        Component message = Component.translatable("justtp.message.tp.coordinates", moved.getDisplayName(), x, y, z);
+        sendTpMessage(source, message, () -> {
+            if (moved != source.getEntity()) {
+                moved.sendSystemMessage(message);
+            }
+        });
+    }
+
+    private static void sendTpMessage(CommandSourceStack source, Component message, Runnable bothExtra) {
         switch (Config.tpMessageMode) {
             case OFF -> {
             }
             case BOTH -> {
-                source.sendSystemMessage(sourceMessage, false);
-                if (!source.getUUID().equals(target.getUUID())) {
-                    target.sendSystemMessage(targetMessage);
-                }
+                source.sendSuccess(() -> message, false);
+                bothExtra.run();
             }
-            case ALL -> source.server.getPlayerList().broadcastSystemMessage(sourceMessage, false);
+            case ALL -> source.getServer().getPlayerList().broadcastSystemMessage(message, false);
         }
     }
 
-    private static void sendTpCoordinatesMessages(ServerPlayer source, Vec3 pos) {
-        String x = String.format(Locale.ROOT, "%.2f", pos.x);
-        String y = String.format(Locale.ROOT, "%.2f", pos.y);
-        String z = String.format(Locale.ROOT, "%.2f", pos.z);
-        Component message = Component.translatable("justtp.message.tp.coordinates", source.getDisplayName(), x, y, z);
-
-        switch (Config.tpMessageMode) {
-            case OFF -> {
-            }
-            case BOTH -> source.sendSystemMessage(message, false);
-            case ALL -> source.server.getPlayerList().broadcastSystemMessage(message, false);
+    private static ServerPlayer getPlayerArg(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
+        String raw = getRawArgument(ctx, name);
+        if (raw.startsWith("@") && !raw.equals("@s")) {
+            ctx.getSource().sendFailure(Component.translatable("argument.entity.notfound.player"));
+            return null;
         }
+        return EntityArgument.getPlayer(ctx, name);
+    }
+
+    private static String getRawArgument(CommandContext<CommandSourceStack> ctx, String name) {
+        for (ParsedCommandNode<CommandSourceStack> node : ctx.getNodes()) {
+            if (node.getNode() instanceof ArgumentCommandNode<?, ?> arg && arg.getName().equals(name)) {
+                var range = node.getRange();
+                return ctx.getInput().substring(range.getStart(), range.getEnd());
+            }
+        }
+        return "";
     }
 }
