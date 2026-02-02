@@ -4,6 +4,7 @@ import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.context.ParsedCommandNode;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.tree.ArgumentCommandNode;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -130,8 +131,10 @@ public class JustTP {
     }
 
     private static void sendTpPlayerMessages(CommandSourceStack source, ServerPlayer moved, ServerPlayer destination) {
-        Component sourceMessage = Component.translatable("justtp.message.tp.source", moved.getDisplayName(), destination.getDisplayName());
-        Component targetMessage = Component.translatable("justtp.message.tp.target", moved.getDisplayName());
+        Component sourceMessage = Component.translatable("justtp.message.tp.source", moved.getDisplayName(), destination.getDisplayName())
+                .withStyle(ChatFormatting.GRAY);
+        Component targetMessage = Component.translatable("justtp.message.tp.target", moved.getDisplayName())
+                .withStyle(ChatFormatting.GRAY);
         sendTpMessage(source, sourceMessage, () -> {
             if (destination != source.getEntity()) {
                 destination.sendSystemMessage(targetMessage);
@@ -143,7 +146,8 @@ public class JustTP {
         String x = String.format(Locale.ROOT, "%.2f", pos.x);
         String y = String.format(Locale.ROOT, "%.2f", pos.y);
         String z = String.format(Locale.ROOT, "%.2f", pos.z);
-        Component message = Component.translatable("justtp.message.tp.coordinates", moved.getDisplayName(), x, y, z);
+        Component message = Component.translatable("justtp.message.tp.coordinates", moved.getDisplayName(), x, y, z)
+                .withStyle(ChatFormatting.GRAY);
         sendTpMessage(source, message, () -> {
             if (moved != source.getEntity()) {
                 moved.sendSystemMessage(message);
