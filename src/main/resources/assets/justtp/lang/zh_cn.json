@@ -1,0 +1,7 @@
+{
+  "justtp.error.only_player": "只有玩家可以使用 /tp",
+  "justtp.error.coordinates_disabled": "服务器已禁用坐标传送",
+  "justtp.message.tp.source": "%s 传送到了 %s",
+  "justtp.message.tp.target": "%s 传送到了你这里",
+  "justtp.message.tp.coordinates": "%s 传送到了坐标 %s, %s, %s"
+}

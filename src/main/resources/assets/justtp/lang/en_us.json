@@ -1,0 +1,7 @@
+{
+  "justtp.error.only_player": "Only players can use /tp",
+  "justtp.error.coordinates_disabled": "Coordinate teleport is disabled on this server",
+  "justtp.message.tp.source": "%s teleported to %s",
+  "justtp.message.tp.target": "%s teleported to you",
+  "justtp.message.tp.coordinates": "%s teleported to %s, %s, %s"
+}
