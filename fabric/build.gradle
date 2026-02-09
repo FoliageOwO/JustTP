@@ -1,0 +1,40 @@
+plugins {
+    id 'fabric-loom'
+}
+
+base {
+    archivesName = "${mod_id}-fabric"
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${minecraft_version}"
+    mappings loom.officialMojangMappings()
+
+    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_api_build_version}"
+}
+
+sourceSets.main.java.srcDir(project(':').file('common/src/main/java'))
+sourceSets.main.resources.srcDir(project(':').file('common/src/main/resources'))
+
+processResources {
+    var replaceProperties = [
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_version            : mod_version,
+            mod_description        : mod_description,
+            mod_authors            : mod_authors,
+            mod_license            : mod_license,
+            fabric_minecraft_version_range: fabric_minecraft_version_range,
+            fabric_loader_version  : fabric_loader_version,
+            fabric_api_version     : fabric_api_min_version
+    ]
+    inputs.properties replaceProperties
+    filesMatching('fabric.mod.json') {
+        expand replaceProperties
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

@@ -5,6 +5,7 @@ import com.mojang.brigadier.context.ParsedCommandNode;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.tree.ArgumentCommandNode;
 import net.minecraft.ChatFormatting;
+import com.mojang.brigadier.CommandDispatcher;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -12,32 +13,18 @@ import net.minecraft.commands.arguments.coordinates.Vec3Argument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Relative;
 import net.minecraft.world.phys.Vec3;
-import net.neoforged.bus.api.IEventBus;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModContainer;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.fml.common.Mod;
-import net.neoforged.fml.config.ModConfig;
-import net.neoforged.neoforge.event.RegisterCommandsEvent;
 
 import java.util.Locale;
+import java.util.Set;
 
-@EventBusSubscriber
-@Mod(JustTP.MODID)
-public class JustTP {
-    public static final String MODID = "justtp";
-
-    public JustTP(IEventBus modEventBus, ModContainer modContainer) {
-        modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
+public final class JustTPCommands {
+    private JustTPCommands() {
     }
 
-    @SubscribeEvent
-    public static void onRegisterCommands(RegisterCommandsEvent event) {
-        var dispatcher = event.getDispatcher();
-        dispatcher.getRoot().getChildren().removeIf(node ->
-                node.getName().equals("tp")
-        );
+    public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.getRoot().getChildren().removeIf(node -> node.getName().equals("tp"));
         var tp = Commands.literal("tp")
                 .requires(source -> true);
 
@@ -47,7 +34,7 @@ public class JustTP {
         var selfTarget = Commands.literal("@s")
                 .executes(ctx -> teleportSelfToPlayer(ctx.getSource(), ctx.getSource().getPlayerOrException()));
 
-        if (Config.ENABLE_COORDINATE_TP.get()) {
+        if (JustTPConfig.enableCoordinateTp) {
             tp = tp.then(Commands.argument("pos", Vec3Argument.vec3())
                     .executes(ctx -> teleportSelfToCoordinates(ctx.getSource(), Vec3Argument.getVec3(ctx, "pos"))));
             targetArg = targetArg.then(Commands.argument("pos", Vec3Argument.vec3())
@@ -81,7 +68,7 @@ public class JustTP {
         dispatcher.register(tp);
     }
 
-    private static int teleportSelfToPlayer(CommandSourceStack source, ServerPlayer destination) throws CommandSyntaxException {
+    private static int teleportSelfToPlayer(CommandSourceStack source, ServerPlayer destination) {
         if (destination == null) {
             return 0;
         }
@@ -89,11 +76,15 @@ public class JustTP {
             source.sendFailure(Component.translatable("justtp.error.only_player"));
             return 0;
         }
-        return teleportTargetsToPlayer(source, source.getPlayerOrException(), destination);
+        try {
+            return teleportTargetsToPlayer(source, source.getPlayerOrException(), destination);
+        } catch (CommandSyntaxException e) {
+            return 0;
+        }
     }
 
-    private static int teleportSelfToCoordinates(CommandSourceStack source, Vec3 pos) throws CommandSyntaxException {
-        if (!Config.enableCoordinateTp) {
+    private static int teleportSelfToCoordinates(CommandSourceStack source, Vec3 pos) {
+        if (!JustTPConfig.enableCoordinateTp) {
             source.sendFailure(Component.translatable("justtp.error.coordinates_disabled"));
             return 0;
         }
@@ -101,31 +92,35 @@ public class JustTP {
             source.sendFailure(Component.translatable("justtp.error.only_player"));
             return 0;
         }
-        ServerPlayer self = source.getPlayerOrException();
-        return teleportTargetsToCoordinates(source, self, pos);
+        try {
+            ServerPlayer self = source.getPlayerOrException();
+            return teleportTargetsToCoordinates(source, self, pos);
+        } catch (CommandSyntaxException e) {
+            return 0;
+        }
     }
 
     private static int teleportTargetsToPlayer(CommandSourceStack source, ServerPlayer target, ServerPlayer destination) {
         if (target == null || destination == null) {
             return 0;
         }
-        ServerLevel targetLevel = destination.serverLevel();
+        ServerLevel targetLevel = (ServerLevel) destination.level();
         Vec3 pos = destination.position();
-        target.teleportTo(targetLevel, pos.x, pos.y, pos.z, target.getYRot(), target.getXRot());
+        target.teleportTo(targetLevel, pos.x, pos.y, pos.z, Set.of(), target.getYRot(), target.getXRot(), false);
         sendTpPlayerMessages(source, target, destination);
         return 1;
     }
 
     private static int teleportTargetsToCoordinates(CommandSourceStack source, ServerPlayer target, Vec3 pos) {
-        if (!Config.enableCoordinateTp) {
+        if (!JustTPConfig.enableCoordinateTp) {
             source.sendFailure(Component.translatable("justtp.error.coordinates_disabled"));
             return 0;
         }
         if (target == null) {
             return 0;
         }
-        ServerLevel level = target.serverLevel();
-        target.teleportTo(level, pos.x, pos.y, pos.z, target.getYRot(), target.getXRot());
+        ServerLevel level = (ServerLevel) target.level();
+        target.teleportTo(level, pos.x, pos.y, pos.z, Set.of(), target.getYRot(), target.getXRot(), false);
         sendTpCoordinatesMessages(source, target, pos);
         return 1;
     }
@@ -156,7 +151,7 @@ public class JustTP {
     }
 
     private static void sendTpMessage(CommandSourceStack source, Component message, Runnable bothExtra) {
-        switch (Config.tpMessageMode) {
+        switch (JustTPConfig.tpMessageMode) {
             case OFF -> {
             }
             case BOTH -> {
@@ -167,13 +162,17 @@ public class JustTP {
         }
     }
 
-    private static ServerPlayer getPlayerArg(CommandContext<CommandSourceStack> ctx, String name) throws CommandSyntaxException {
+    private static ServerPlayer getPlayerArg(CommandContext<CommandSourceStack> ctx, String name) {
         String raw = getRawArgument(ctx, name);
         if (raw.startsWith("@") && !raw.equals("@s")) {
             ctx.getSource().sendFailure(Component.translatable("argument.entity.notfound.player"));
             return null;
         }
-        return EntityArgument.getPlayer(ctx, name);
+        try {
+            return EntityArgument.getPlayer(ctx, name);
+        } catch (CommandSyntaxException e) {
+            return null;
+        }
     }
 
     private static String getRawArgument(CommandContext<CommandSourceStack> ctx, String name) {
